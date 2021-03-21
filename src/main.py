@@ -20,7 +20,7 @@ sys.setrecursionlimit(5000)
 DEFAULT_PROB_INDEX = 0
 DEFAULT_EPSILON = 0.1
 DEFAULT_GAMMA = 0.99
-DEFAULT_ALGORITHM = 'vi'
+DEFAULT_ALGORITHM = 'lao'
 DEFAULT_SIMULATE = False
 DEFAULT_RENDER_AND_SAVE = False
 DEFAULT_ELIMINATE_TRAPS = False
@@ -57,7 +57,7 @@ def parse_args():
                         help="Discount factor (default: %s)" % str(DEFAULT_GAMMA))
     parser.add_argument('--algorithm',
                         dest='algorithm',
-                        choices=['vi', 'lao', 'ilao'],
+                        choices=['lao', 'ilao'],
                         default=DEFAULT_ALGORITHM,
                         help="Algorithm (default: %s)" % DEFAULT_ALGORITHM)
     parser.add_argument(
@@ -168,46 +168,7 @@ n_updates = None
 
 print('obtaining optimal policy')
 start = time.time()
-if args.algorithm == 'vi':
-    print(' calculating list of states...')
-    reach = mdp.get_all_reachable(obs, A, env)
-    S = list(sorted([s for s in reach]))
-    print('Number of states:', len(S))
-
-    print('done')
-    V_i = {s: i for i, s in enumerate(S)}
-    G_i = [V_i[s] for s in V_i if check_goal(s, goal)]
-    #
-    succ_states = {s: {} for s in reach}
-    for s in reach:
-        for a in A:
-            succ_states[s, a] = reach[s][a]
-
-    V_dual, P_dual, pi_dual, i_dual = gubs.dual_criterion(args.lamb,
-                                                          V_i,
-                                                          S,
-                                                          h_v,
-                                                          goal,
-                                                          succ_states,
-                                                          A,
-                                                          epsilon=args.epsilon)
-
-    n_updates_dc = i_dual * len(S)
-    if args.algorithm_gubs == 'vi':
-        C_max = gubs.get_cmax(V_dual, V_i, P_dual, S, succ_states, A,
-                              args.lamb, args.k_g)
-        print("C_max:", C_max)
-        V, P, pi = gubs.egubs_vi(V_dual, P_dual, pi_dual, C_max, args.lamb,
-                                 args.k_g, V_i, S, goal, succ_states, A)
-        pi_func = lambda s, C: pi[V_i[s], C] if C < pi.shape[1] else pi[V_i[s], -1]
-        n_updates = (C_max + 1) * len(S)
-        print('Result for initial state dc:', P_dual[V_i[obs]], V_dual[V_i[obs]])
-        print('Result for initial state:', P[V_i[obs], 0], V[V_i[obs], 0])
-    else:
-        pi_func = lambda s: pi_dual[V_i[s]]
-        n_updates = n_updates_dc
-        print('Result for initial state:', P_dual[V_i[obs]], V_dual[V_i[obs]])
-elif args.algorithm == 'lao':
+if args.algorithm == 'lao':
     explicit_graph, bpsg, n_updates = mdp.lao(
         obs, h_v, goal, A, args.gamma, env, args.epsilon)
 elif args.algorithm == 'ilao':
@@ -221,7 +182,7 @@ print('Result for initial state:', explicit_graph[obs]['value'], explicit_graph[
 
 print("Final updates:", n_updates)
 
-n_episodes = 500
+n_episodes = 100
 
 if args.plot_stats:
     print('running episodes with optimal policy')

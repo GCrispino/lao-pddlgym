@@ -39,47 +39,6 @@ def get_all_reachable(s, A, env, reach=None):
                 reach.update(get_all_reachable(s_, A, env, reach))
     return reach
 
-
-def vi(S, succ_states, A, V_i, G_i, goal, env, gamma, epsilon):
-
-    V = np.zeros(len(V_i))
-    P = np.zeros(len(V_i))
-    pi = np.full(len(V_i), None)
-    print(len(S), len(V_i), len(G_i), len(P))
-    print(G_i)
-    P[G_i] = 1
-
-    i = 0
-    diff = np.inf
-    while True:
-        print('Iteration', i, diff)
-        V_ = np.copy(V)
-        P_ = np.copy(P)
-
-        for s in S:
-            if check_goal(s, goal):
-                continue
-            Q = np.zeros(len(A))
-            Q_p = np.zeros(len(A))
-            cost = 1
-            for i_a, a in enumerate(A):
-                succ = succ_states[s, a]
-
-                probs = np.fromiter(iter(succ.values()), dtype=float)
-                succ_i = [V_i[succ_s] for succ_s in succ_states[s, a]]
-                Q[i_a] = cost + np.dot(probs, gamma * V_[succ_i])
-                Q_p[i_a] = np.dot(probs, P_[succ_i])
-            V[V_i[s]] = np.min(Q)
-            P[V_i[s]] = np.max(Q_p)
-            pi[V_i[s]] = A[np.argmin(Q)]
-
-        diff = np.linalg.norm(V_ - V, np.inf)
-        if diff < epsilon:
-            break
-        i += 1
-    return V, pi
-
-
 def expand_state(s, h_v, env, explicit_graph, goal, A, succs_cache=None):
     if check_goal(s, goal):
         raise ValueError(
@@ -250,44 +209,6 @@ def dfs(mdp, on_visit=None, on_visit_neighbor=None, on_finish=None):
 
     return d, f, colors
 
-
-def get_sccs(mdp):
-    stack = deque()
-    sccs = set()
-
-    def on_visit(s, i, d, low):
-        stack.append(s)
-
-    def on_visit_neighbor(s, i, s_, j, d, low):
-        if s_ in stack:
-            low[i] = min(low[i], d[j])
-
-    def on_finish(s, i, d, low):
-        new_scc = deque()
-        if d[i] == low[i]:
-            while True:
-                n = stack.pop()
-                new_scc.append(n)
-                if s == n:
-                    break
-        if len(new_scc) > 0:
-            sccs.add(frozenset(new_scc))
-
-    dfs(mdp, on_visit, on_visit_neighbor, on_finish)
-
-    return sccs
-
-
-def topological_sort(mdp):
-    stack = []
-
-    def dfs_fn(s, *_):
-        stack.append(s)
-
-    dfs(mdp, on_finish=dfs_fn)
-    return list(reversed(stack))
-
-
 def update_action_partial_solution(s, s0, bpsg, explicit_graph):
     """
         Updates partial solution given pair of state and action
@@ -346,124 +267,6 @@ def update_partial_solution(s0, bpsg, explicit_graph):
 
     return bpsg_
 
-
-def is_trap(scc, sccs, goal, explicit_graph):
-    """
-        detect if there is an edge that goes to a state
-        from other components that is not a goal
-    """
-
-    is_trap = True
-    for s in scc:
-        if check_goal(s, goal):
-            is_trap = False
-        for adj in explicit_graph[s]['Adj']:
-            s_ = adj['state']
-            if explicit_graph[s_]['scc'] != explicit_graph[s]['scc']:
-                is_trap = False
-                break
-        if not is_trap:
-            break
-    return is_trap
-
-
-def eliminate_traps(bpsg, goal, A, explicit_graph, env, succs_cache):
-    sccs = list(get_sccs(bpsg))
-
-    # store scc index for each state in bpsg
-    for i, scc in enumerate(sccs):
-        for s in scc:
-            bpsg[s]['scc'] = i
-
-    traps = set(filter(lambda scc: is_trap(scc, sccs, goal, bpsg), sccs))
-
-    for i, trap in enumerate(traps):
-        # check if trap is transient or permanent
-        found_action = False
-        actions = set()
-        actions_diff_state = set()
-        for s in trap:
-            if not explicit_graph[s]['expanded']:
-                all_succs = set()
-                for a in A:
-                    succs = get_successor_states_check_exception(
-                        s, a, env.domain)
-                    if (s, a) not in succs_cache:
-                        succs_cache[(s, a)] = succs
-                    all_succs.update(set(succs))
-                    for s_ in succs:
-                        if s_ != s:
-                            actions_diff_state.add(a)
-                        if s_ not in trap:
-                            found_action = True
-                            actions.add(a)
-            else:
-                for adj in explicit_graph[s]['Adj']:
-                    s_ = adj['state']
-                    if s_ != s:
-                        actions_diff_state.update(set(adj['A']))
-                    if s_ not in trap:
-                        found_action = True
-                        actions.update(set(adj['A']))
-
-        if not found_action:
-            # permanent
-            for s in trap:
-                explicit_graph[s]['value'] = 0
-                explicit_graph[s]['prob'] = 0
-                explicit_graph[s]['solved'] = True
-        else:
-            # transient
-            shape = len(trap), len(actions)
-            A_i = {a: i for i, a in enumerate(A)}
-            Q_v = np.zeros(shape)
-            Q_p = np.zeros(shape)
-            trap_states = list(trap)
-            action_list = list(actions)
-            for i, s in enumerate(trap_states):
-                for i_a, a in enumerate(action_list):
-                    Q_v[i][i_a] = explicit_graph[s]['Q_v'][a]
-                    Q_p[i][i_a] = explicit_graph[s]['Q_p'][a]
-            max_prob = np.max(Q_p)
-            i_max_prob = np.argwhere(Q_p == max_prob)
-            i_s_a_max_prob = {i: set() for i in set(i_max_prob.T[0])}
-            for i_s, i_a in i_max_prob:
-                i_s_a_max_prob[i_s].add(i_a)
-
-            max_utility = -np.inf
-            a_max_utility = None
-            s_max_utility = None
-            for i_s, i_a_set in i_s_a_max_prob.items():
-                for i_a in i_a_set:
-                    if Q_v[i_s, i_a] > max_utility:
-                        max_utility = Q_v[i_s, i_a]
-                        a_max_utility = action_list[i_a]
-                        s_max_utility = trap_states[i_s]
-
-            for s in trap:
-                if 'blacklist' not in explicit_graph[s]:
-                    explicit_graph[s]['blacklist'] = set()
-                blacklist = explicit_graph[s]['blacklist']
-                new_blacklisted = None
-                if s == s_max_utility:
-                    explicit_graph[s]['pi'] = a_max_utility
-
-                    # blacklist actions that are not in actions set
-                    new_blacklisted = set(A) - actions
-                else:
-                    # blacklist actions that go to the same state
-                    new_blacklisted = set(A) - actions_diff_state
-                assert len(new_blacklisted) < len(A)
-                # mark as changed if blacklist set changes
-                if new_blacklisted and (new_blacklisted != blacklist):
-                    explicit_graph[s]['blacklist'] = new_blacklisted
-
-                explicit_graph[s]['value'] = max_utility
-                explicit_graph[s]['prob'] = max_prob
-
-    return bpsg, succs_cache
-
-
 def backup_bellman(explicit_graph, A, s, goal, gamma, C):
     np.seterr(all='raise')
 
@@ -476,8 +279,6 @@ def backup_bellman(explicit_graph, A, s, goal, gamma, C):
         ]) for i, a in enumerate(A)
     ])
 
-    for i, a in enumerate(A):
-        explicit_graph[s]['Q_v'][a] = actions_results[i]
 
     i_a = np.argmin(actions_results)
     explicit_graph[s]['value'] = actions_results[i_a]
@@ -502,7 +303,6 @@ def value_iteration(explicit_graph,
 
     # initialize
     V = np.zeros(n_states, dtype=float)
-    Q_v = np.zeros((n_states, n_actions), dtype=float)
     pi = np.full(n_states, None)
     V_i = {s: i for i, s in enumerate(explicit_graph)}
     A_i = {a: i for i, a in enumerate(A)}
@@ -510,9 +310,6 @@ def value_iteration(explicit_graph,
     for s, n in explicit_graph.items():
         V[V_i[s]] = n['value']
         pi[V_i[s]] = n['pi']
-
-        for a in A:
-            Q_v[V_i[s], A_i[a]] = n['Q_v'][a]
 
     i = 0
 
@@ -539,7 +336,6 @@ def value_iteration(explicit_graph,
                     for s_ in all_reachable[i]
                 ]) for i, a in enumerate(A)
             ])
-            Q_v[V_i[s]] = actions_results
 
             i_a = np.argmin(actions_results)
             V_[V_i[s]] = actions_results[i_a]
@@ -570,127 +366,8 @@ def value_iteration(explicit_graph,
         explicit_graph[s]['value'] = V[V_i[s]]
         explicit_graph[s]['pi'] = pi[V_i[s]]
 
-        for a in A:
-            explicit_graph[s]['Q_v'][a] = Q_v[V_i[s], A_i[a]]
-
     #print(f'{i} iterations')
     return explicit_graph, converged, changed, n_updates
-
-
-def lao_dual_criterion_fret(s0,
-                            h_v,
-                            h_p,
-                            goal,
-                            A,
-                            lamb,
-                            env,
-                            epsilon=1e-3,
-                            explicit_graph=None):
-    bpsg = {s0: {"Adj": []}}
-    explicit_graph = explicit_graph or {}
-    succs_cache = {}
-
-    if s0 in explicit_graph and explicit_graph[s0]['solved']:
-        return explicit_graph, bpsg, 0
-
-    if s0 not in explicit_graph:
-        explicit_graph[s0] = {
-            "value": h_v(s0),
-            "prob": h_p(s0),
-            "solved": False,
-            "expanded": False,
-            "pi": None,
-            "Q_v": {a: h_v(s0)
-                    for a in A},
-            "Q_p": {a: h_p(s0)
-                    for a in A},
-            "Adj": []
-        }
-
-    def C(s, a):
-        return 0 if check_goal(s, goal) else 1
-
-    i = 1
-    unexpanded = get_unexpanded_states(goal, explicit_graph, bpsg)
-    n_updates = 0
-    explicit_graph_cur_size = 1
-    while True:
-        while len(unexpanded) > 0:
-            s = unexpanded[0]
-            print("Iteration", i)
-            print("Will expand", len(unexpanded), "states")
-            Z = set()
-            for s in unexpanded:
-                explicit_graph = expand_state_dual_criterion(
-                    s,
-                    h_v,
-                    h_p,
-                    env,
-                    explicit_graph,
-                    goal,
-                    A,
-                    p_zero=False,
-                    succs_cache=succs_cache)
-                Z.add(s)
-                Z.update(find_ancestors(s, explicit_graph, best=True))
-
-            assert len(explicit_graph) >= explicit_graph_cur_size
-
-            explicit_graph_cur_size = len(explicit_graph)
-            print("explicit graph size:", explicit_graph_cur_size)
-            print("Z size:", len(Z))
-            explicit_graph, _, __, n_updates_ = value_iteration_dual_criterion(
-                explicit_graph,
-                bpsg,
-                A,
-                Z,
-                goal,
-                lamb,
-                C,
-                epsilon=epsilon,
-                p_zero=False)
-            print(f"Finished value iteration in {n_updates_} updates")
-            n_updates += n_updates_
-            bpsg = update_partial_solution(s0, bpsg, explicit_graph)
-
-            bpsg, succs_cache = eliminate_traps(bpsg, goal, A, explicit_graph,
-                                                env, succs_cache)
-
-            bpsg = update_partial_solution(s0, bpsg, explicit_graph)
-
-            unexpanded = get_unexpanded_states(goal, explicit_graph, bpsg)
-            i += 1
-        bpsg_states = [s_ for s_ in bpsg.keys() if not check_goal(s_, goal)]
-        print(f"Will start convergence test for bpsg with {len(bpsg)} states")
-        explicit_graph, converged, changed, n_updates_ = value_iteration_dual_criterion(
-            explicit_graph,
-            bpsg,
-            A,
-            bpsg_states,
-            goal,
-            lamb,
-            C,
-            epsilon=epsilon,
-            convergence_test=True,
-            p_zero=False)
-        n_updates += n_updates_
-
-        bpsg = update_partial_solution(s0, bpsg, explicit_graph)
-        bpsg, succs_cache = eliminate_traps(bpsg, goal, A, explicit_graph, env,
-                                            succs_cache)
-
-        bpsg = update_partial_solution(s0, bpsg, explicit_graph)
-        unexpanded = get_unexpanded_states(goal, explicit_graph, bpsg)
-
-        if changed:
-            continue
-
-        if converged and len(unexpanded) == 0:
-            break
-    for s_ in bpsg:
-        explicit_graph[s_]['solved'] = True
-    return explicit_graph, bpsg, n_updates
-
 
 def lao(s0, h_v, goal, A, gamma, env, epsilon=1e-3):
     bpsg = {s0: {"Adj": []}}

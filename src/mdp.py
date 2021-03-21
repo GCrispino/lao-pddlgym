@@ -464,48 +464,24 @@ def eliminate_traps(bpsg, goal, A, explicit_graph, env, succs_cache):
     return bpsg, succs_cache
 
 
-def backup_dual_criterion(explicit_graph, A, s, goal, lamb, C):
+def backup_bellman(explicit_graph, A, s, goal, gamma, C):
     np.seterr(all='raise')
 
-    A_blacklist = explicit_graph[s][
-        'blacklist'] if 'blacklist' in explicit_graph[s] else set()
     all_reachable = np.array([find_reachable(s, a, explicit_graph) for a in A],
                              dtype=object)
-    actions_results_p = np.array([
-        np.sum([
-            explicit_graph[s_['state']]['prob'] * s_['A'][a]
-            for s_ in all_reachable[i]
-        ]) for i, a in enumerate(A)
-    ])
-
-    # set maxprob
-    max_prob = np.max([
-        res for i, res in enumerate(actions_results_p)
-        if A[i] not in A_blacklist
-    ])
-    explicit_graph[s]['prob'] = max_prob
-    i_A_max_prob = np.array([
-        i for i, res in enumerate(actions_results_p)
-        if res == max_prob and A[i] not in A_blacklist
-    ])
-
-    A_max_prob = A[i_A_max_prob]
 
     actions_results = np.array([
         np.sum([
-            np.exp(lamb * C(s, A[i])) * explicit_graph[s_['state']]['value'] *
-            s_['A'][a] for s_ in all_reachable[i]
+            C(s, A[i]) + gamma * explicit_graph[s_['state']]['value'] * s_['A'][a] for s_ in all_reachable[i]
         ]) for i, a in enumerate(A)
     ])
-    actions_results_max_prob = actions_results[i_A_max_prob]
 
     for i, a in enumerate(A):
         explicit_graph[s]['Q_v'][a] = actions_results[i]
-        explicit_graph[s]['Q_p'][a] = actions_results_p[i]
 
-    i_a = np.argmax(actions_results_max_prob)
-    explicit_graph[s]['value'] = actions_results_max_prob[i_a]
-    explicit_graph[s]['pi'] = A_max_prob[i_a]
+    i_a = np.argmin(actions_results)
+    explicit_graph[s]['value'] = actions_results[i_a]
+    explicit_graph[s]['pi'] = A[i_a]
 
     return explicit_graph
 
@@ -791,36 +767,28 @@ def lao(s0, h_v, goal, A, gamma, env, epsilon=1e-3):
     return explicit_graph, bpsg, n_updates
 
 
-def ilao_dual_criterion_fret(s0,
-                             h_v,
-                             h_p,
-                             goal,
-                             A,
-                             lamb,
-                             env,
-                             epsilon=1e-3,
-                             explicit_graph=None,
-                             succs_cache=None):
+def ilao(s0,
+         h_v,
+         goal,
+         A,
+         gamma,
+         env,
+         epsilon=1e-3,
+         succs_cache=None):
+
     bpsg = {s0: {"Adj": []}}
-    explicit_graph = explicit_graph or {}
+    explicit_graph = {}
     succs_cache = {} if succs_cache == None else succs_cache
 
-    if s0 in explicit_graph and explicit_graph[s0]['solved']:
-        return explicit_graph, bpsg, 0, succs_cache
-
-    if s0 not in explicit_graph:
-        explicit_graph[s0] = {
-            "value": h_v(s0),
-            "prob": h_p(s0),
-            "solved": False,
-            "expanded": False,
-            "pi": None,
-            "Q_v": {a: h_v(s0)
-                    for a in A},
-            "Q_p": {a: h_p(s0)
-                    for a in A},
-            "Adj": []
-        }
+    explicit_graph[s0] = {
+        "value": h_v(s0),
+        "solved": False,
+        "expanded": False,
+        "pi": None,
+        "Q_v": {a: h_v(s0)
+                for a in A},
+        "Adj": []
+    }
 
     def C(s, a):
         return 0 if check_goal(s, goal) else 1
@@ -831,7 +799,6 @@ def ilao_dual_criterion_fret(s0,
     explicit_graph_cur_size = 1
     while True:
         while len(unexpanded) > 0:
-            s = unexpanded[0]
             print("Iteration", i)
             print(len(unexpanded), "unexpanded states")
 
@@ -841,20 +808,18 @@ def ilao_dual_criterion_fret(s0,
                 nonlocal explicit_graph, A, goal, n_updates_
                 is_goal = check_goal(s, goal)
                 if not is_goal and not explicit_graph[s]['expanded']:
-                    explicit_graph = expand_state_dual_criterion(
+                    explicit_graph = expand_state(
                         s,
                         h_v,
-                        h_p,
                         env,
                         explicit_graph,
                         goal,
                         A,
-                        p_zero=False,
                         succs_cache=succs_cache)
-                if not is_goal and not explicit_graph[s]['solved']:
+                if not is_goal:
                     # run bellman backup
-                    explicit_graph = backup_dual_criterion(
-                        explicit_graph, A, s, goal, lamb, C)
+                    explicit_graph = backup_bellman(
+                        explicit_graph, A, s, goal, gamma, C)
                     n_updates_ += 1
 
             dfs(bpsg, on_visit=visit)
@@ -867,34 +832,25 @@ def ilao_dual_criterion_fret(s0,
             n_updates += n_updates_
             bpsg = update_partial_solution(s0, bpsg, explicit_graph)
 
-            bpsg, succs_cache = eliminate_traps(bpsg, goal, A, explicit_graph,
-                                                env, succs_cache)
-
-            bpsg = update_partial_solution(s0, bpsg, explicit_graph)
-
             unexpanded = get_unexpanded_states(goal, explicit_graph, bpsg)
             i += 1
         bpsg_states = [s_ for s_ in bpsg.keys() if not check_goal(s_, goal)]
         print(f"Will start convergence test for bpsg with {len(bpsg)} states")
-        explicit_graph, converged, changed, n_updates_ = value_iteration_dual_criterion(
+        explicit_graph, converged, changed, n_updates_ = value_iteration(
             explicit_graph,
             bpsg,
             A,
             bpsg_states,
             goal,
-            lamb,
+            gamma,
             C,
             epsilon=epsilon,
-            convergence_test=True,
-            p_zero=False)
+            convergence_test=True)
         n_updates += n_updates_
         print(f"Finished convergence test in {n_updates_} updates")
 
         bpsg = update_partial_solution(s0, bpsg, explicit_graph)
-        bpsg, succs_cache = eliminate_traps(bpsg, goal, A, explicit_graph, env,
-                                            succs_cache)
 
-        bpsg = update_partial_solution(s0, bpsg, explicit_graph)
         unexpanded = get_unexpanded_states(goal, explicit_graph, bpsg)
 
         if changed:
@@ -904,4 +860,4 @@ def ilao_dual_criterion_fret(s0,
             break
     for s_ in bpsg:
         explicit_graph[s_]['solved'] = True
-    return explicit_graph, bpsg, n_updates, succs_cache
+    return explicit_graph, bpsg, n_updates

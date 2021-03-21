@@ -14,10 +14,10 @@ For usage instructions, run `python main.py --help` in the repository's root fol
 
 The following command example can be used to solve the first available instance of the Triangle Tireworld [[Little et al., 2007](http://users.cecs.anu.edu.au/~iain/icaps07.pdf)] environment using the ILAO algorithm and output some results:
 
-`$ python main.py --env PDDLEnvTireworld-v0 --problem_index 0 --algorithm ilao --output`
+`$ python src/main.py --env PDDLEnvTireworld-v0 --problem_index 0 --algorithm ilao --output`
 
 To simulate an episode after the optimal policy has been found and render each encountered state:
 
-`$ python main.py --env PDDLEnvTireworld-v0 --problem_index 0 --algorithm ilao --simulate --render_and_save`
+`$ python src/main.py --env PDDLEnvTireworld-v0 --problem_index 0 --algorithm ilao --simulate --render_and_save`
 
 Right now only the heuristic function h(s) = 0 is available, so the performance might not be great.
